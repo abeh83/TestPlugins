@@ -1,0 +1,8 @@
+{
+  "name": "My Idlix",
+  "description": "My private plugin repo",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/abeh83/TestPlugins/builds/plugins.json"
+  ]
+}

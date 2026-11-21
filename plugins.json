@@ -1,0 +1,22 @@
+[
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=https://z3.idlixku.com&sz=%size%",
+        "fileHash": "sha256-65f5ce0d424eb82015172b4c7c852566e262673a943bb54cf2bbda6bf4afbe93",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/abeh83/TestPlugins",
+        "fileSize": 76014,
+        "status": 1,
+        "language": "id",
+        "authors": [
+            "ExtremeBoy"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries"
+        ],
+        "version": 31,
+        "internalName": "Idlix",
+        "url": "https://raw.githubusercontent.com/abeh83/TestPlugins/builds/Idlix.cs3",
+        "name": "Idlix"
+    }
+]
