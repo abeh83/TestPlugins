@@ -63,17 +63,31 @@ class IdlixPlugin : Plugin() {
                     .setTitle("Idlix Login")
                     .setView(layout)
                     .setNegativeButton("Cancel", null)
-                    .setPositiveButton("Login") { _, _ ->
-                        password.text.clear()
-
-                        Toast.makeText(
-                            ctx,
-                            "Login UI test",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
+					.setPositiveButton("Login") { _, _ ->
+					
+						val identifier = username.text.toString().trim()
+						val hasPassword = password.text.isNotEmpty()
+					
+						password.text.clear()
+					
+						val message = when {
+							identifier.isBlank() ->
+								"Please enter your username or email"
+					
+							!hasPassword ->
+								"Please enter your password"
+					
+							else ->
+								"Input validated. Authentication not configured."
+						}
+					
+						Toast.makeText(
+							ctx,
+							message,
+							Toast.LENGTH_SHORT
+						).show()
+					}
                     .show()
-            }
         }
     }
-}
+}}
