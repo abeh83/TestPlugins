@@ -40,6 +40,24 @@ class Idlix : MainAPI() {
 
     private val cfKiller = CloudflareKiller()
 
+    // ===== Login / Session =====
+    private var accessToken: String? = null
+    private var refreshToken: String? = null
+    private var isLoggedIn = false
+    private val myUser = "tukul3"
+    private val myPass = "abcd1234"
+
+    private val authHeaders: Map<String, String>
+        get() {
+            val headers = apiHeaders.toMutableMap()
+            accessToken?.let {
+                headers["Cookie"] = "access_token=$it"
+                // Also try Authorization header just in case
+                headers["Authorization"] = "Bearer $it"
+            }
+            return headers
+        }
+
     // A getter, so the Referer follows mainUrl when the domain moves.
     private val apiHeaders
         get() = mapOf(
@@ -85,8 +103,89 @@ class Idlix : MainAPI() {
         }
     }
 
+    	/**
+	* Simple login for Idlix.
+	* Call this with username/email + password.
+	* Returns true if login succeeded.
+	*/
+	suspend fun login(identifier: String, password: String): Boolean {
+		ensureMainUrl()
+	
+		val body = mapOf(
+			"identifier" to identifier,
+			"password" to password
+		)
+	
+		return try {
+			val response = app.post(
+				"$mainUrl/api/auth/login",
+				headers = apiHeaders + mapOf(
+					"Content-Type" to "application/json",
+					"Origin" to mainUrl,
+					"Referer" to "$mainUrl/"
+				),
+				json = body,
+				interceptor = cfKiller
+			)
+	
+			if (!response.isSuccessful) {
+				Log.e("Idlix", "Login failed: ${response.code} - ${response.text}")
+				return false
+			}
+	
+			// Extract tokens from Set-Cookie headers
+			val cookies = response.headers.values("set-cookie")
+			var access: String? = null
+			var refresh: String? = null
+	
+			cookies.forEach { cookie ->
+				when {
+					cookie.startsWith("access_token=") -> {
+						access = cookie.substringAfter("access_token=").substringBefore(";")
+					}
+					cookie.startsWith("refresh_token=") -> {
+						refresh = cookie.substringAfter("refresh_token=").substringBefore(";")
+					}
+				}
+			}
+	
+			// Fallback: sometimes token is also in the JSON body
+			val json = try { JSONObject(response.text) } catch (_: Exception) { null }
+			if (access == null) {
+				access = json?.optString("access_token")?.takeIf { it.isNotBlank() }
+			}
+	
+			if (access != null) {
+				accessToken = access
+				refreshToken = refresh
+				isLoggedIn = true
+				Log.d("Idlix", "Login successful as ${json?.optJSONObject("user")?.optString("username")}")
+				true
+			} else {
+				Log.e("Idlix", "Login succeeded but no access_token found")
+				false
+			}
+		} catch (e: Exception) {
+			Log.e("Idlix", "Login error", e)
+			false
+		}
+	}
+	
+	fun logout() {
+		accessToken = null
+		refreshToken = null
+		isLoggedIn = false
+	}
+
+    private suspend fun ensureLoggedIn() {
+        if (accessToken != null) return
+        login(myUser, myPass)
+    }
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         ensureMainUrl()
+        ensureLoggedIn()
+        
         val sections = listOfNotNull(
             getApiSection("Movies", page, "api/movies"),
             getApiSection("TV Series", page, "api/series"),
@@ -129,8 +228,9 @@ class Idlix : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         ensureMainUrl()
+        ensureLoggedIn()
         val q = URLEncoder.encode(query, "UTF-8")
-        val resp = app.get("$mainUrl/api/search?q=$q", headers = apiHeaders, interceptor = cfKiller)
+        val resp = app.get("$mainUrl/api/search?q=$q", headers = authHeaders, interceptor = cfKiller)
         val text = resp.text
         val data = try { JSONObject(text).optJSONArray("results") } catch (e: Exception) { return emptyList() }
         if (data == null) return emptyList()
