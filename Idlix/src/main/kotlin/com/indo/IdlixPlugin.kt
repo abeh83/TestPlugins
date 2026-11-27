@@ -8,9 +8,17 @@ import android.widget.Toast
 import android.text.InputType
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 @CloudstreamPlugin
 class IdlixPlugin : Plugin() {
+
+    private val loginScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Main
+    )
 
     override fun load(context: Context) {
 
@@ -66,28 +74,57 @@ class IdlixPlugin : Plugin() {
 					.setPositiveButton("Login") { _, _ ->
 					
 						val identifier = username.text.toString().trim()
-						val hasPassword = password.text.isNotEmpty()
+						val passwordValue = password.text.toString()
 					
 						password.text.clear()
 					
-						val message = when {
-							identifier.isBlank() ->
-								"Please enter your username or email"
+						if (identifier.isBlank() || passwordValue.isEmpty()) {
 					
-							!hasPassword ->
-								"Please enter your password"
+							Toast.makeText(
+								ctx,
+								"Please enter username and password",
+								Toast.LENGTH_SHORT
+							).show()
 					
-							else ->
-								"Input validated. Authentication not configured."
+						} else {
+					
+							loginScope.launch {
+					
+								val result = provider.testLogin(
+									identifier,
+									passwordValue
+								)
+					
+								val message = when (result) {
+									Idlix.LoginResult.SUCCESS ->
+										"Test login successful"
+					
+									Idlix.LoginResult.INVALID_CREDENTIALS ->
+										"Invalid username or password"
+					
+									Idlix.LoginResult.NETWORK_ERROR ->
+										"Network connection error"
+					
+									Idlix.LoginResult.SESSION_ERROR ->
+										"Unable to establish session"
+					
+									Idlix.LoginResult.UNTRUSTED_ENDPOINT ->
+										"Untrusted authentication endpoint"
+					
+									Idlix.LoginResult.SERVER_ERROR ->
+										"Authentication service unavailable"
+								}
+					
+								Toast.makeText(
+									ctx,
+									message,
+									Toast.LENGTH_SHORT
+								).show()
+							}
 						}
-					
-						Toast.makeText(
-							ctx,
-							message,
-							Toast.LENGTH_SHORT
-						).show()
 					}
-                    .show()
-        }
-    }
-}}
+					.show()
+			}
+		}
+	}
+}
