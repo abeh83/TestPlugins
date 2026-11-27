@@ -99,7 +99,7 @@ class Idlix : MainAPI() {
                 timeout = 120_000L
             )
 
-            // We use the callback to ensure we only stop on a successful (200 OK) POST
+            // The WebViewResolver returns a Pair. We only need the response here.
             val (request, response) = resolver.resolveUsingWebView(
                 url = loginUrl,
                 referer = "$mainUrl/",
@@ -109,27 +109,25 @@ class Idlix : MainAPI() {
                 req.url.encodedPath == "/api/auth/login" && req.method == "POST"
             }
 
-            // Check if the response was actually successful (200 OK)
-            if (response?.code == 200) {
-                // 1. Check the response body to be absolutely sure
-                val responseBody = response.body?.string() ?: ""
-                val isSuccessJson = responseBody.contains("\"user\"") || responseBody.contains("sessionExpiresAt")
+            // 1. Check if the response contains the success JSON
+            // In Cloudstream's WebViewResolver, the response is a String (the body).
+            val responseBody = response ?: ""
+            val isSuccessJson = responseBody.contains("\"user\"") || responseBody.contains("sessionExpiresAt")
 
-                // 2. Grab the cookies
-                val cookies = withContext(Dispatchers.Main) {
-                    CookieManager.getInstance().getCookie(mainUrl)
-                }
-    
-                if (isSuccessJson || (!cookies.isNullOrBlank() && (cookies.contains("session") || cookies.contains("token") || cookies.contains("auth")))) {
-                    if (!cookies.isNullOrBlank()) {
-                        saveSession(cookies)
-                        Log.d(TAG, "Login successful, cookies saved.")
-                        return true
-                    }
+            // 2. Grab the cookies
+            val cookies = withContext(Dispatchers.Main) {
+                CookieManager.getInstance().getCookie(mainUrl)
+            }
+
+            if (isSuccessJson || (!cookies.isNullOrBlank() && (cookies.contains("session") || cookies.contains("token") || cookies.contains("auth")))) {
+                if (!cookies.isNullOrBlank()) {
+                    saveSession(cookies)
+                    Log.d(TAG, "Login successful, cookies saved.")
+                    return true
                 }
             }
             
-            Log.e(TAG, "Login failed: response code ${response?.code}")
+            Log.e(TAG, "Login failed: response body was empty or cookies missing.")
             false
         } catch (e: Exception) {
             Log.e(TAG, "WebView login failed: ${e.message}")
