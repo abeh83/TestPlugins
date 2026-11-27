@@ -46,6 +46,32 @@ class Idlix : MainAPI() {
 	private var isLoggedIn = false
 	private var authenticatedOrigin: String? = null
 
+	enum class LoginResult {
+		SUCCESS,
+		INVALID_CREDENTIALS,
+		NETWORK_ERROR,
+		SESSION_ERROR,
+		UNTRUSTED_ENDPOINT,
+		SERVER_ERROR
+	}
+
+	suspend fun testLogin(
+		identifier: String,
+		password: String
+	): LoginResult {
+	
+		delay(1000L)
+	
+		return if (
+			identifier == "testuser" &&
+			password == "test123456"
+		) {
+			LoginResult.SUCCESS
+		} else {
+			LoginResult.INVALID_CREDENTIALS
+		}
+	}
+
 	fun hasAccountSession(): Boolean {
     	return isLoggedIn &&
         	!accessToken.isNullOrBlank() &&
