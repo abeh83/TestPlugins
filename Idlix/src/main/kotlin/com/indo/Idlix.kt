@@ -85,55 +85,49 @@ class Idlix : MainAPI() {
      * The user logs in manually, and we intercept the successful /api/auth/login response
      * to extract the session cookies.
      */
-    suspend fun loginWithWebView(): Boolean {
-        ensureMainUrl()
-        val loginUrl = "$mainUrl/auth/login"
-        
-        return try {
-            val resolver = WebViewResolver(
-                interceptUrl = Regex(".*/api/auth/login.*"),
-                additionalUrls = emptyList(),
-                userAgent = null,
-                useOkhttp = false,
-                script = null, 
-                timeout = 120_000L
-            )
-
-            // The WebViewResolver returns a Pair. We only need the response here.
-            val (request, response) = resolver.resolveUsingWebView(
-                url = loginUrl,
-                referer = "$mainUrl/",
-                headers = emptyMap(),
-                method = "GET"
-            ) { req ->
-                req.url.encodedPath == "/api/auth/login" && req.method == "POST"
-            }
-
-            // 1. Check if the response contains the success JSON
-            // In Cloudstream's WebViewResolver, the response is a String (the body).
-            val responseBody = response ?: ""
-            val isSuccessJson = responseBody.contains("\"user\"") || responseBody.contains("sessionExpiresAt")
-
-            // 2. Grab the cookies
-            val cookies = withContext(Dispatchers.Main) {
-                CookieManager.getInstance().getCookie(mainUrl)
-            }
-
-            if (isSuccessJson || (!cookies.isNullOrBlank() && (cookies.contains("session") || cookies.contains("token") || cookies.contains("auth")))) {
-                if (!cookies.isNullOrBlank()) {
-                    saveSession(cookies)
-                    Log.d(TAG, "Login successful, cookies saved.")
-                    return true
-                }
-            }
-            
-            Log.e(TAG, "Login failed: response body was empty or cookies missing.")
-            false
-        } catch (e: Exception) {
-            Log.e(TAG, "WebView login failed: ${e.message}")
-            false
-        }
-    }
+	suspend fun loginWithWebView(): Boolean {
+		ensureMainUrl()
+		val loginUrl = "$mainUrl/auth/login"
+		
+		return try {
+			val resolver = WebViewResolver(
+				interceptUrl = Regex(".*/api/auth/login.*"),
+				additionalUrls = emptyList(),
+				userAgent = null,
+				useOkhttp = false,
+				script = null, 
+				timeout = 120_000L
+			)
+	
+			// We only care about the request being intercepted
+			val (request, _) = resolver.resolveUsingWebView(
+				url = loginUrl,
+				referer = "$mainUrl/",
+				headers = emptyMap(),
+				method = "GET"
+			) { req ->
+				req.url.encodedPath == "/api/auth/login" && req.method == "POST"
+			}
+	
+			// Grab the cookies from the WebView
+			val cookies = withContext(Dispatchers.Main) {
+				CookieManager.getInstance().getCookie(mainUrl)
+			}
+	
+			// If we got cookies back, the login succeeded (the WebView only intercepts on success)
+			if (!cookies.isNullOrBlank()) {
+				saveSession(cookies)
+				Log.d(TAG, "Login successful, cookies saved.")
+				return true
+			}
+			
+			Log.e(TAG, "Login failed: no cookies found after interception.")
+			false
+		} catch (e: Exception) {
+			Log.e(TAG, "WebView login failed: ${e.message}")
+			false
+		}
+	}
 
     // A getter, so the Referer follows mainUrl when the domain moves.
     private val apiHeaders
