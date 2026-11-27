@@ -44,8 +44,10 @@ class Idlix : MainAPI() {
     private var accessToken: String? = null
     private var refreshToken: String? = null
     private var isLoggedIn = false
-    private val myUser = "tukul3"
-    private val myPass = "abcd1234"
+
+	fun hasAccountSession(): Boolean {
+    	return isLoggedIn && !accessToken.isNullOrBlank()
+	}
 
     private val authHeaders: Map<String, String>
         get() {
@@ -177,14 +179,8 @@ class Idlix : MainAPI() {
 		isLoggedIn = false
 	}
 
-    private suspend fun ensureLoggedIn() {
-        if (accessToken != null) return
-        login(myUser, myPass)
-    }
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         ensureMainUrl()
-        ensureLoggedIn()
         
         val sections = listOfNotNull(
             getApiSection("Movies", page, "api/movies"),
@@ -228,7 +224,6 @@ class Idlix : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         ensureMainUrl()
-        ensureLoggedIn()
         val q = URLEncoder.encode(query, "UTF-8")
         val resp = app.get("$mainUrl/api/search?q=$q", headers = authHeaders, interceptor = cfKiller)
         val text = resp.text
