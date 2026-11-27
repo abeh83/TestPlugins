@@ -131,7 +131,7 @@ class Idlix : MainAPI() {
 			)
 	
 			if (!response.isSuccessful) {
-				Log.e("Idlix", "Login failed: ${response.code} - ${response.text}")
+				Log.e("Idlix", "Login failed: HTTP ${response.code}")
 				return false
 			}
 	
@@ -157,7 +157,7 @@ class Idlix : MainAPI() {
 				access = json?.optString("access_token")?.takeIf { it.isNotBlank() }
 			}
 	
-			if (access != null) {
+			if (!access.isNullOrBlank()) {
 				accessToken = access
 				refreshToken = refresh
 				isLoggedIn = true
