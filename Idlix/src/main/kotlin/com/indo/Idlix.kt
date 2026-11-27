@@ -40,25 +40,32 @@ class Idlix : MainAPI() {
 
     private val cfKiller = CloudflareKiller()
 
-    // ===== Login / Session =====
-    private var accessToken: String? = null
-    private var refreshToken: String? = null
-    private var isLoggedIn = false
+	// ===== Login / Session =====
+	private var accessToken: String? = null
+	private var refreshToken: String? = null
+	private var isLoggedIn = false
+	private var authenticatedOrigin: String? = null
 
 	fun hasAccountSession(): Boolean {
-    	return isLoggedIn && !accessToken.isNullOrBlank()
+    	return isLoggedIn &&
+        	!accessToken.isNullOrBlank() &&
+        	authenticatedOrigin != null &&
+        	authenticatedOrigin == mainUrl
 	}
 
-    private val authHeaders: Map<String, String>
-        get() {
-            val headers = apiHeaders.toMutableMap()
-            accessToken?.let {
-                headers["Cookie"] = "access_token=$it"
-                // Also try Authorization header just in case
-                headers["Authorization"] = "Bearer $it"
-            }
-            return headers
-        }
+	private val authHeaders: Map<String, String>
+		get() {
+			val headers = apiHeaders.toMutableMap()
+	
+			if (hasAccountSession()) {
+				accessToken?.let {
+					headers["Cookie"] = "access_token=$it"
+					headers["Authorization"] = "Bearer $it"
+				}
+			}
+	
+			return headers
+		}
 
     // A getter, so the Referer follows mainUrl when the domain moves.
     private val apiHeaders
@@ -91,7 +98,7 @@ class Idlix : MainAPI() {
                 app.get(BACKUP_URL, allowRedirects = false, timeout = 5L).okhttpResponse.header("Location")
             }.onFailure { Log.d(TAG, "backup domain check failed: $it") }.getOrNull()
             val target = location?.toHttpUrlOrNull()
-            if (target == null || target.host == BACKUP_HOST || target.host.endsWith(".$BACKUP_HOST")) {
+            if (target == null || target.scheme != "https" || target.host == BACKUP_HOST || target.host.endsWith(".$BACKUP_HOST")) {
                 Log.d(TAG, "backup domain gave no redirect, keeping $mainUrl")
                 return
             }
@@ -127,6 +134,7 @@ class Idlix : MainAPI() {
 					"Referer" to "$mainUrl/"
 				),
 				json = body,
+				allowRedirects = false,
 				interceptor = cfKiller
 			)
 	
@@ -161,14 +169,14 @@ class Idlix : MainAPI() {
 				accessToken = access
 				refreshToken = refresh
 				isLoggedIn = true
-				Log.d("Idlix", "Login successful as ${json?.optJSONObject("user")?.optString("username")}")
+				Log.d("Idlix", "Login successful")
 				true
 			} else {
 				Log.e("Idlix", "Login succeeded but no access_token found")
 				false
 			}
 		} catch (e: Exception) {
-			Log.e("Idlix", "Login error", e)
+			Log.e("Idlix", "Login error: ${e.javaClass.simpleName}")
 			false
 		}
 	}
@@ -176,6 +184,7 @@ class Idlix : MainAPI() {
 	fun logout() {
 		accessToken = null
 		refreshToken = null
+		authenticatedOrigin = null
 		isLoggedIn = false
 	}
 
