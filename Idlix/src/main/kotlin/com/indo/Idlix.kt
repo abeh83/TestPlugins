@@ -1,9 +1,8 @@
 package com.indo
 
-import android.content.SharedPreferences
+import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebView
-import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.network.CloudflareKiller
@@ -41,93 +40,58 @@ class Idlix : MainAPI() {
 
     private val cfKiller = CloudflareKiller()
 
-    // ===== Login / Session =====
-    private var savedCookie: String? = null
-    private var isLoggedIn = false
+	// ===== Login / Session =====
+	private var accessToken: String? = null
+	private var refreshToken: String? = null
+	private var isLoggedIn = false
+	private var authenticatedOrigin: String? = null
 
-    // Passed in from the Plugin
-    var prefs: SharedPreferences? = null 
+	enum class LoginResult {
+		SUCCESS,
+		INVALID_CREDENTIALS,
+		NETWORK_ERROR,
+		SESSION_ERROR,
+		UNTRUSTED_ENDPOINT,
+		SERVER_ERROR
+	}
 
-    fun loadSession() {
-        savedCookie = prefs?.getString("idlix_cookie", null)
-        isLoggedIn = !savedCookie.isNullOrBlank()
-    }
-
-    fun saveSession(cookie: String) {
-        savedCookie = cookie
-        isLoggedIn = true
-        prefs?.edit()?.putString("idlix_cookie", cookie)?.apply()
-    }
-
-    fun logout() {
-        savedCookie = null
-        isLoggedIn = false
-        prefs?.edit()?.remove("idlix_cookie")?.apply()
-        
-        // Clear WebView cookies as well
-        CookieManager.getInstance().removeAllCookies(null)
-        CookieManager.getInstance().flush()
-    }
-
-    fun hasAccountSession(): Boolean = isLoggedIn && !savedCookie.isNullOrBlank()
-
-    private val authHeaders: Map<String, String>
-        get() {
-            val headers = apiHeaders.toMutableMap()
-            if (hasAccountSession()) {
-                savedCookie?.let { headers["Cookie"] = it }
-            }
-            return headers
-        }
-
-    /**
-     * Loads the login page in a WebView. 
-     * The user logs in manually, and we intercept the successful /api/auth/login response
-     * to extract the session cookies.
-     */
-	suspend fun loginWithWebView(): Boolean {
-		ensureMainUrl()
-		val loginUrl = "$mainUrl/auth/login"
-		
-		return try {
-			val resolver = WebViewResolver(
-				interceptUrl = Regex(".*/api/auth/login.*"),
-				additionalUrls = emptyList(),
-				userAgent = null,
-				useOkhttp = false,
-				script = null, 
-				timeout = 120_000L
-			)
+	suspend fun testLogin(
+		identifier: String,
+		password: String
+	): LoginResult {
 	
-			// We only care about the request being intercepted
-			val (request, _) = resolver.resolveUsingWebView(
-				url = loginUrl,
-				referer = "$mainUrl/",
-				headers = emptyMap(),
-				method = "GET"
-			) { req ->
-				req.url.encodedPath == "/api/auth/login" && req.method == "POST"
-			}
+		delay(1000L)
 	
-			// Grab the cookies from the WebView
-			val cookies = withContext(Dispatchers.Main) {
-				CookieManager.getInstance().getCookie(mainUrl)
-			}
-	
-			// If we got cookies back, the login succeeded (the WebView only intercepts on success)
-			if (!cookies.isNullOrBlank()) {
-				saveSession(cookies)
-				Log.d(TAG, "Login successful, cookies saved.")
-				return true
-			}
-			
-			Log.e(TAG, "Login failed: no cookies found after interception.")
-			false
-		} catch (e: Exception) {
-			Log.e(TAG, "WebView login failed: ${e.message}")
-			false
+		return if (
+			identifier == "testuser" &&
+			password == "test123456"
+		) {
+			LoginResult.SUCCESS
+		} else {
+			LoginResult.INVALID_CREDENTIALS
 		}
 	}
+
+	fun hasAccountSession(): Boolean {
+    	return isLoggedIn &&
+        	!accessToken.isNullOrBlank() &&
+        	authenticatedOrigin != null &&
+        	authenticatedOrigin == mainUrl
+	}
+
+	private val authHeaders: Map<String, String>
+		get() {
+			val headers = apiHeaders.toMutableMap()
+	
+			if (hasAccountSession()) {
+				accessToken?.let {
+					headers["Cookie"] = "access_token=$it"
+					headers["Authorization"] = "Bearer $it"
+				}
+			}
+	
+			return headers
+		}
 
     // A getter, so the Referer follows mainUrl when the domain moves.
     private val apiHeaders
@@ -173,6 +137,82 @@ class Idlix : MainAPI() {
             }
         }
     }
+
+    	/**
+	* Simple login for Idlix.
+	* Call this with username/email + password.
+	* Returns true if login succeeded.
+	*/
+	suspend fun login(identifier: String, password: String): Boolean {
+		ensureMainUrl()
+	
+		val body = mapOf(
+			"identifier" to identifier,
+			"password" to password
+		)
+	
+		return try {
+			val response = app.post(
+				"$mainUrl/api/auth/login",
+				headers = apiHeaders + mapOf(
+					"Content-Type" to "application/json",
+					"Origin" to mainUrl,
+					"Referer" to "$mainUrl/"
+				),
+				json = body,
+				allowRedirects = false,
+				interceptor = cfKiller
+			)
+	
+			if (!response.isSuccessful) {
+				Log.e("Idlix", "Login failed: HTTP ${response.code}")
+				return false
+			}
+	
+			// Extract tokens from Set-Cookie headers
+			val cookies = response.headers.values("set-cookie")
+			var access: String? = null
+			var refresh: String? = null
+	
+			cookies.forEach { cookie ->
+				when {
+					cookie.startsWith("access_token=") -> {
+						access = cookie.substringAfter("access_token=").substringBefore(";")
+					}
+					cookie.startsWith("refresh_token=") -> {
+						refresh = cookie.substringAfter("refresh_token=").substringBefore(";")
+					}
+				}
+			}
+	
+			// Fallback: sometimes token is also in the JSON body
+			val json = try { JSONObject(response.text) } catch (_: Exception) { null }
+			if (access == null) {
+				access = json?.optString("access_token")?.takeIf { it.isNotBlank() }
+			}
+	
+			if (!access.isNullOrBlank()) {
+				accessToken = access
+				refreshToken = refresh
+				isLoggedIn = true
+				Log.d("Idlix", "Login successful")
+				true
+			} else {
+				Log.e("Idlix", "Login succeeded but no access_token found")
+				false
+			}
+		} catch (e: Exception) {
+			Log.e("Idlix", "Login error: ${e.javaClass.simpleName}")
+			false
+		}
+	}
+	
+	fun logout() {
+		accessToken = null
+		refreshToken = null
+		authenticatedOrigin = null
+		isLoggedIn = false
+	}
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         ensureMainUrl()
@@ -845,10 +885,9 @@ class Idlix : MainAPI() {
         var lastRefreshAt = 0L
 
         // Only for testing the refresh: makes the first token look like it runs out early.
-		@Volatile var forcedExpiry: Long = (
-    		if (FORCE_REFRESH_AFTER_SEC > 0) System.currentTimeMillis() / 1000 + FORCE_REFRESH_AFTER_SEC
-    		else Long.MAX_VALUE
-		)
+        @Volatile var forcedExpiry: Long =
+            if (FORCE_REFRESH_AFTER_SEC > 0) System.currentTimeMillis() / 1000 + FORCE_REFRESH_AFTER_SEC
+            else Long.MAX_VALUE
 
         val canRefresh get() = claim != null || renewalToken != null
 
