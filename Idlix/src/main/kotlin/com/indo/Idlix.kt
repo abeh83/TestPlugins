@@ -1405,8 +1405,6 @@ class Idlix : MainAPI() {
 			.toList()
 	}
 
-	private data class Variant(val url: String, val name: String, val height: Int)
-
 	private fun parseQuality(q: String): Int {
 		return when {
 			q.contains("4K", true) ||
