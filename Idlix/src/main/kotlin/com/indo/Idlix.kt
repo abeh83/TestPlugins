@@ -931,7 +931,7 @@ class Idlix : MainAPI() {
                 try {
                     val redeemResp = app.post(
                         fullRedeemUrl,
-                        headers = mapOf(
+                        headers = authHeaders + mapOf(
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
                             "Origin" to mainUrl,
                             "Referer" to "$mainUrl/",
@@ -957,7 +957,7 @@ class Idlix : MainAPI() {
                     try {
                         val pentosResp = app.post(
                             "https://e2e.majorplay.net/api/play",
-                            headers = mapOf(
+                            headers = authHeaders + mapOf(
                                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
                                 "Origin" to mainUrl,
                                 "Referer" to "$mainUrl/",
