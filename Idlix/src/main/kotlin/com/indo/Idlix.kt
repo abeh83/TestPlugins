@@ -2,6 +2,10 @@ package com.indo
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.Build
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
 import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebView
@@ -29,8 +33,16 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLDecoder
 import java.net.URLEncoder
+import java.security.KeyStore
+import java.text.SimpleDateFormat
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
+import java.util.Locale
+import java.util.TimeZone
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 class Idlix : MainAPI() {
     override var mainUrl = "https://z3.idlixku.com"
@@ -47,6 +59,7 @@ class Idlix : MainAPI() {
 	private var refreshToken: String? = null
 	private var isLoggedIn = false
 	private var authenticatedOrigin: String? = null
+	private var sessionExpiresAt: Long = 0L
 	
 	// ===== Session persistence =====
 	private var sessionPrefs: SharedPreferences? = null
@@ -57,17 +70,219 @@ class Idlix : MainAPI() {
 		restoreSession()
 	}
 	
-	private fun persistSession() {
+	private fun getSessionKey(): SecretKey {
+		check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+	
+		val keyStore = KeyStore.getInstance("AndroidKeyStore").apply {
+			load(null)
+		}
+	
+		val existingKey = keyStore.getKey(
+			SESSION_KEY_ALIAS,
+			null
+		) as? SecretKey
+	
+		if (existingKey != null) {
+			return existingKey
+		}
+	
+		val keyGenerator = KeyGenerator.getInstance(
+			KeyProperties.KEY_ALGORITHM_AES,
+			"AndroidKeyStore"
+		)
+	
+		val keySpec = KeyGenParameterSpec.Builder(
+			SESSION_KEY_ALIAS,
+			KeyProperties.PURPOSE_ENCRYPT or
+				KeyProperties.PURPOSE_DECRYPT
+		)
+			.setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+			.setEncryptionPaddings(
+				KeyProperties.ENCRYPTION_PADDING_NONE
+			)
+			.setKeySize(256)
+			.build()
+	
+		keyGenerator.init(keySpec)
+	
+		return keyGenerator.generateKey()
+	}
+	
+	private fun encryptSession(value: String): String {
+		val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+	
+		cipher.init(
+			Cipher.ENCRYPT_MODE,
+			getSessionKey()
+		)
+	
+		val encrypted = cipher.doFinal(
+			value.toByteArray(Charsets.UTF_8)
+		)
+	
+		val iv = Base64.encodeToString(
+			cipher.iv,
+			Base64.NO_WRAP
+		)
+	
+		val data = Base64.encodeToString(
+			encrypted,
+			Base64.NO_WRAP
+		)
+	
+		return "$iv:$data"
+	}
+	
+	private fun decryptSession(value: String): String {
+		val parts = value.split(":", limit = 2)
+	
+		require(parts.size == 2)
+	
+		val iv = Base64.decode(parts[0], Base64.NO_WRAP)
+		val data = Base64.decode(parts[1], Base64.NO_WRAP)
+	
+		val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+	
+		cipher.init(
+			Cipher.DECRYPT_MODE,
+			getSessionKey(),
+			GCMParameterSpec(128, iv)
+		)
+	
+		return String(
+			cipher.doFinal(data),
+			Charsets.UTF_8
+		)
+	}
+	
+	private fun clearSavedSession() {
 		sessionPrefs?.edit()
 			?.remove(KEY_ACCESS)
 			?.remove(KEY_REFRESH)
 			?.remove(KEY_ORIGIN)
 			?.remove(KEY_LOGGED_IN)
-			?.apply()
+			?.remove(KEY_ENCRYPTED_SESSION)
+			?.commit()
+	}
+	
+	private fun persistSession() {
+		val prefs = sessionPrefs ?: return
+	
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+			!hasAccountSession()
+		) {
+			clearSavedSession()
+			return
+		}
+	
+		try {
+			val session = JSONObject()
+				.put("accessToken", accessToken)
+				.put("origin", authenticatedOrigin)
+				.put("expiresAt", sessionExpiresAt)
+	
+			val encrypted = encryptSession(
+				session.toString()
+			)
+	
+			val saved = prefs.edit()
+				.remove(KEY_ACCESS)
+				.remove(KEY_REFRESH)
+				.remove(KEY_ORIGIN)
+				.remove(KEY_LOGGED_IN)
+				.putString(KEY_ENCRYPTED_SESSION, encrypted)
+				.commit()
+	
+			if (saved) {
+				Log.d(TAG, "Encrypted account session saved")
+			} else {
+				clearSavedSession()
+				Log.w(TAG, "Unable to save account session")
+			}
+	
+		} catch (e: Exception) {
+			clearSavedSession()
+	
+			Log.w(
+				TAG,
+				"Session storage failed: ${e.javaClass.simpleName}"
+			)
+		}
 	}
 	
 	private fun restoreSession() {
-		persistSession()
+		val prefs = sessionPrefs ?: return
+	
+		// Remove legacy plaintext credentials.
+		prefs.edit()
+			.remove(KEY_ACCESS)
+			.remove(KEY_REFRESH)
+			.remove(KEY_ORIGIN)
+			.remove(KEY_LOGGED_IN)
+			.apply()
+	
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+			clearSavedSession()
+			return
+		}
+	
+		try {
+			val encrypted = prefs.getString(
+				KEY_ENCRYPTED_SESSION,
+				null
+			) ?: return
+	
+			val session = JSONObject(
+				decryptSession(encrypted)
+			)
+	
+			val token = session.optString("accessToken", "")
+			val origin = session.optString("origin", "")
+			val expiresAt = session.optLong("expiresAt", 0L)
+	
+			if (token.isBlank() ||
+				origin != mainUrl ||
+				expiresAt <= System.currentTimeMillis()
+			) {
+				logout()
+				return
+			}
+	
+			accessToken = token
+			refreshToken = null
+			authenticatedOrigin = origin
+			sessionExpiresAt = expiresAt
+			isLoggedIn = true
+	
+			Log.d(TAG, "Encrypted account session restored")
+	
+		} catch (e: Exception) {
+			logout()
+	
+			Log.w(
+				TAG,
+				"Session restoration failed: ${e.javaClass.simpleName}"
+			)
+		}
+	}
+	
+	private fun parseSessionExpiration(value: String): Long {
+		if (value.isBlank()) return 0L
+	
+		return try {
+			val format = SimpleDateFormat(
+				"yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+				Locale.US
+			).apply {
+				timeZone = TimeZone.getTimeZone("UTC")
+				isLenient = false
+			}
+	
+			format.parse(value)?.time ?: 0L
+	
+		} catch (_: Exception) {
+			0L
+		}
 	}
 
 	enum class LoginResult {
@@ -102,9 +317,15 @@ class Idlix : MainAPI() {
 		}
 	
 		if (authenticatedOrigin.isNullOrBlank() ||
-			authenticatedOrigin != mainUrl
+			authenticatedOrigin != mainUrl ||
+			authenticatedOrigin != "https://z3.idlixku.com"
 		) {
 			Log.w(TAG, "Account session origin mismatch")
+			return false
+		}
+	
+		if (sessionExpiresAt <= System.currentTimeMillis()) {
+			logout()
 			return false
 		}
 	
@@ -233,6 +454,17 @@ class Idlix : MainAPI() {
 				refreshToken = refresh
 				isLoggedIn = true
 				authenticatedOrigin = mainUrl
+				
+				sessionExpiresAt = parseSessionExpiration(
+					json?.optString("sessionExpiresAt", "") ?: ""
+				)
+				
+				if (sessionExpiresAt <= System.currentTimeMillis()) {
+					logout()
+					Log.w(TAG, "Missing or expired session expiration")
+					return false
+				}
+				
 				persistSession()
 				Log.d("Idlix", "Login successful")
 				true
@@ -250,8 +482,10 @@ class Idlix : MainAPI() {
 		accessToken = null
 		refreshToken = null
 		authenticatedOrigin = null
+		sessionExpiresAt = 0L
 		isLoggedIn = false
-		persistSession()
+	
+		clearSavedSession()
 	}
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -1118,6 +1352,12 @@ class Idlix : MainAPI() {
 		private const val KEY_REFRESH = "refresh_token"
 		private const val KEY_ORIGIN = "authenticated_origin"
 		private const val KEY_LOGGED_IN = "is_logged_in"
+
+		private const val SESSION_KEY_ALIAS =
+			"idlix_account_session_key_v18"
+		
+		private const val KEY_ENCRYPTED_SESSION =
+			"encrypted_session_v18"
 
         // Lets the hidden WebView be inspected over adb (chrome://inspect) while testing.
         private const val DEBUG_WEBVIEW = false
