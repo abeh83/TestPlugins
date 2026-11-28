@@ -1124,15 +1124,11 @@ class Idlix : MainAPI() {
         userAgent: String?,
         callback: (ExtractorLink) -> Unit
     ) {
-        // Plain headers for the CDN: no auth token, no Cloudflare solver.
-        val cdnHeaders = mutableMapOf(
-            "Origin" to mainUrl,
-            "Referer" to "$mainUrl/"
-        )
-        if (!userAgent.isNullOrBlank()) cdnHeaders["User-Agent"] = userAgent
+        val linkHeaders = authHeaders.toMutableMap()
+        if (!userAgent.isNullOrBlank()) linkHeaders["User-Agent"] = userAgent
 
         val variants = runCatching {
-            parseMasterVariants(app.get(streamUrl, headers = cdnHeaders).text, streamUrl)
+            parseMasterVariants(app.get(streamUrl, headers = linkHeaders, interceptor = cfKiller).text, streamUrl)
         }.getOrNull().orEmpty()
 
         if (variants.isNotEmpty()) {
@@ -1149,7 +1145,7 @@ class Idlix : MainAPI() {
                         else -> Qualities.Unknown.value
                     }
                     this.referer = "$mainUrl/"
-                    this.headers = cdnHeaders
+                    this.headers = linkHeaders
                 })
             }
             return
@@ -1165,7 +1161,7 @@ class Idlix : MainAPI() {
                 else -> Qualities.Unknown.value
             }
             this.referer = "$mainUrl/"
-            this.headers = cdnHeaders
+            this.headers = linkHeaders
         })
     }
 
