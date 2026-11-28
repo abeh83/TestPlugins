@@ -1348,7 +1348,8 @@ class Idlix : MainAPI() {
 
 	private fun parseQuality(q: String): Int {
 		return when {
-			q.contains("4K", true) -> Qualities.P2160.value
+			q.contains("4K", true) ||
+			q.contains("2160", true) -> Qualities.P2160.value
 			q.contains("1080", true) -> Qualities.P1080.value
 			q.contains("720", true) -> Qualities.P720.value
 			q.contains("480", true) -> Qualities.P480.value
