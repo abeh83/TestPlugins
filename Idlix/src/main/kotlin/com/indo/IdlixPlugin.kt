@@ -31,7 +31,7 @@ class IdlixPlugin : Plugin() {
             if (provider.hasAccountSession()) {
                 AlertDialog.Builder(ctx)
                     .setTitle("Idlix Account")
-                    .setMessage("You are logged in. The session is saved and survives app restarts.")
+                    .setMessage("An account session is available for this app session.")
                     .setNegativeButton("Close", null)
                     .setPositiveButton("Logout") { _, _ ->
                         provider.logout()
@@ -88,7 +88,8 @@ class IdlixPlugin : Plugin() {
 
                             Toast.makeText(
                                 ctx,
-                                if (ok) "Login successful" else "Login failed — check your credentials",
+                                if (ok) "Account session established"
+                                else "Unable to establish account session"
                                 Toast.LENGTH_LONG
                             ).show()
                         }
