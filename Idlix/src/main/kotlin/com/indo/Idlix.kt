@@ -1125,6 +1125,8 @@ class Idlix : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ) {
         val linkHeaders = authHeaders.toMutableMap()
+		linkHeaders.remove("Accept")
+		
         if (!userAgent.isNullOrBlank()) linkHeaders["User-Agent"] = userAgent
 
         val variants = runCatching {
