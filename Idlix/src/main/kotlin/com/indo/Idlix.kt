@@ -883,7 +883,7 @@ class Idlix : MainAPI() {
             val playInfoType = if (contentType == "tv_series" || extra.containsKey("season") || !directEpId.isNullOrBlank()) "episode" else "movie"
             val playInfoResp = app.get(
                 "$mainUrl/api/watch/play-info/$playInfoType/$contentId",
-                headers = apiHeaders + mapOf("Referer" to "$pageUrl/"),
+                headers = authHeaders + mapOf("Referer" to "$pageUrl/"),
                 interceptor = cfKiller
             )
             val playInfo = JSONObject(playInfoResp.text)
@@ -1105,11 +1105,12 @@ class Idlix : MainAPI() {
     private suspend fun postClaim(gateToken: String, pageUrl: String): JSONObject {
         val claimResp = app.post(
             "$mainUrl/api/watch/session/claim",
-            headers = apiHeaders + mapOf(
-                "Origin" to mainUrl,
-                "Referer" to "$pageUrl/",
-                "Content-Type" to "application/json"
-            ),
+			headers = authHeaders + mapOf(
+				"User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+				"Origin" to mainUrl,
+				"Referer" to "$mainUrl/",
+				"Content-Type" to "application/json"
+			),
             json = JsonAsString("""{"gateToken":"$gateToken"}"""),
             interceptor = cfKiller
         )
