@@ -883,7 +883,7 @@ class Idlix : MainAPI() {
             val playInfoType = if (contentType == "tv_series" || extra.containsKey("season") || !directEpId.isNullOrBlank()) "episode" else "movie"
             val playInfoResp = app.get(
                 "$mainUrl/api/watch/play-info/$playInfoType/$contentId",
-                headers = apiHeaders + mapOf("Referer" to "$pageUrl/"),
+                headers = authHeaders + mapOf("Referer" to "$pageUrl/"),
                 interceptor = cfKiller
             )
             val playInfo = JSONObject(playInfoResp.text)
@@ -1031,6 +1031,12 @@ class Idlix : MainAPI() {
         val sessionData = AtomicReference<JSONObject?>(null)
         return try {
             if (DEBUG_WEBVIEW) withContext(Dispatchers.Main) { WebView.setWebContentsDebuggingEnabled(true) }
+            if (hasAccountSession()) {
+                accessToken?.let {
+                    CookieManager.getInstance().setCookie(mainUrl, "access_token=$it; path=/; secure")
+                    CookieManager.getInstance().flush()
+                }
+            }
             val resolver = WebViewResolver(
                 interceptUrl = MASTER_URL_REGEX,
                 additionalUrls = listOf(TRACE_URL_REGEX, SESSION_URL_REGEX),
@@ -1118,14 +1124,11 @@ class Idlix : MainAPI() {
         userAgent: String?,
         callback: (ExtractorLink) -> Unit
     ) {
-        // authHeaders carries the access_token cookie/Authorization when logged in,
-        // so the server returns the 1080p master instead of the guest 720p one.
         val linkHeaders = authHeaders.toMutableMap()
         if (!userAgent.isNullOrBlank()) linkHeaders["User-Agent"] = userAgent
 
         val variants = runCatching {
-            val master = app.get(streamUrl, headers = linkHeaders, interceptor = cfKiller).text
-            parseMasterVariants(master, streamUrl)
+            parseMasterVariants(app.get(streamUrl, headers = linkHeaders, interceptor = cfKiller).text, streamUrl)
         }.getOrNull().orEmpty()
 
         if (variants.isNotEmpty()) {
@@ -1148,7 +1151,6 @@ class Idlix : MainAPI() {
             return
         }
 
-        // Fallback: old single-link behavior
         val linkName = if (maxHeight > 0) "Idlix ${maxHeight}p" else "Idlix"
         callback(newExtractorLink("Idlix", linkName, streamUrl, type = ExtractorLinkType.M3U8) {
             this.quality = when {
@@ -1161,6 +1163,39 @@ class Idlix : MainAPI() {
             this.referer = "$mainUrl/"
             this.headers = linkHeaders
         })
+    }
+
+    private data class Variant(val url: String, val name: String, val height: Int)
+
+    private fun parseMasterVariants(master: String, masterUrl: String): List<Variant> {
+        val base = masterUrl.toHttpUrlOrNull() ?: return emptyList()
+        val audioNames = mutableMapOf<String, String>()
+        val out = mutableListOf<Variant>()
+        var audio: String? = null
+        var height = 0
+        var pending = false
+
+        for (raw in master.lineSequence()) {
+            val line = raw.trim()
+            when {
+                line.startsWith("#EXT-X-MEDIA:TYPE=AUDIO") -> {
+                    val g = Regex("""GROUP-ID="([^"]+)"""").find(line)?.groupValues?.get(1)
+                    val n = Regex("""NAME="([^"]+)"""").find(line)?.groupValues?.get(1)
+                    if (g != null && n != null) audioNames[g] = n
+                }
+                line.startsWith("#EXT-X-STREAM-INF") -> {
+                    audio = Regex("""AUDIO="([^"]+)"""").find(line)?.groupValues?.getOrNull(1)
+                    height = Regex("""RESOLUTION=\d+x(\d+)""").find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                    pending = true
+                }
+                pending && line.isNotEmpty() && !line.startsWith("#") -> {
+                    val url = base.resolve(line)?.toString() ?: continue
+                    out.add(Variant(url, audio?.let { audioNames[it] } ?: "Idlix $height", height))
+                    pending = false
+                }
+            }
+        }
+        return out
     }
 
     /**
