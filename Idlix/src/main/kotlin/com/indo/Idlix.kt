@@ -1102,43 +1102,83 @@ class Idlix : MainAPI() {
         }
     }
 
-    private suspend fun postClaim(gateToken: String, pageUrl: String): JSONObject {
-        val claimResp = app.post(
-            "$mainUrl/api/watch/session/claim",
+	private suspend fun postClaim(gateToken: String, pageUrl: String): JSONObject {
+		val claimResp = app.post(
+			"$mainUrl/api/watch/session/claim",
 			headers = authHeaders + mapOf(
-				"User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
 				"Origin" to mainUrl,
-				"Referer" to "$mainUrl/",
+				"Referer" to "$pageUrl/",
 				"Content-Type" to "application/json"
 			),
-            json = JsonAsString("""{"gateToken":"$gateToken"}"""),
-            interceptor = cfKiller
-        )
-        return JSONObject(claimResp.text)
-    }
+			json = JsonAsString("""{"gateToken":"$gateToken"}"""),
+			interceptor = cfKiller
+		)
+		return JSONObject(claimResp.text)
+	}
 
-    private suspend fun emitStream(
-        streamUrl: String,
-        maxHeight: Int,
-        userAgent: String?,
-        callback: (ExtractorLink) -> Unit
-    ) {
-        val linkHeaders = mutableMapOf("Origin" to mainUrl, "Referer" to "$mainUrl/")
-        if (!userAgent.isNullOrBlank()) linkHeaders["User-Agent"] = userAgent
-        val linkName = if (maxHeight > 0) "Idlix ${maxHeight}p" else "Idlix"
-        val linkQuality = when {
-            maxHeight >= 1080 -> Qualities.P1080.value
-            maxHeight >= 720 -> Qualities.P720.value
-            maxHeight >= 480 -> Qualities.P480.value
-            maxHeight >= 360 -> Qualities.P360.value
-            else -> Qualities.Unknown.value
-        }
-        callback(newExtractorLink("Idlix", linkName, streamUrl, type = ExtractorLinkType.M3U8) {
-            this.quality = linkQuality
-            this.referer = "$mainUrl/"
-            this.headers = linkHeaders
-        })
-    }
+	private suspend fun emitStream(
+		streamUrl: String,
+		maxHeight: Int,
+		userAgent: String?,
+		callback: (ExtractorLink) -> Unit
+	) {
+		val linkHeaders = mutableMapOf("Origin" to mainUrl, "Referer" to "$mainUrl/")
+		if (!userAgent.isNullOrBlank()) linkHeaders["User-Agent"] = userAgent
+	
+		// Try to fetch the master and extract all available resolutions
+		val resolutions = try {
+			val masterText = app.get(
+				streamUrl,
+				headers = linkHeaders,
+				interceptor = cfKiller
+			).text
+			getAvailableResolutions(masterText)
+		} catch (_: Exception) {
+			emptyList()
+		}
+	
+		if (resolutions.isNotEmpty()) {
+			// Emit one link per resolution (highest first)
+			for (height in resolutions) {
+				// Skip qualities higher than what the account is allowed
+				if (maxHeight > 0 && height > maxHeight) continue
+	
+				val quality = when {
+					height >= 1080 -> Qualities.P1080.value
+					height >= 720  -> Qualities.P720.value
+					height >= 480  -> Qualities.P480.value
+					height >= 360  -> Qualities.P360.value
+					else           -> Qualities.Unknown.value
+				}
+	
+				callback(newExtractorLink(
+					"Idlix",
+					"Idlix ${height}p",
+					streamUrl,
+					type = ExtractorLinkType.M3U8
+				) {
+					this.quality = quality
+					this.referer = "$mainUrl/"
+					this.headers = linkHeaders
+				})
+			}
+		} else {
+			// Fallback: single link (old behaviour)
+			val linkName = if (maxHeight > 0) "Idlix ${maxHeight}p" else "Idlix"
+			val linkQuality = when {
+				maxHeight >= 1080 -> Qualities.P1080.value
+				maxHeight >= 720  -> Qualities.P720.value
+				maxHeight >= 480  -> Qualities.P480.value
+				maxHeight >= 360  -> Qualities.P360.value
+				else              -> Qualities.Unknown.value
+			}
+			callback(newExtractorLink("Idlix", linkName, streamUrl, type = ExtractorLinkType.M3U8) {
+				this.quality = linkQuality
+				this.referer = "$mainUrl/"
+				this.headers = linkHeaders
+			})
+		}
+	}
 
     /**
      * One playback: the master's token and what is needed to get a new one. The stream token runs
