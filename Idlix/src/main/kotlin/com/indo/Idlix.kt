@@ -931,10 +931,8 @@ class Idlix : MainAPI() {
                 try {
                     val redeemResp = app.post(
                         fullRedeemUrl,
-                        headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+                        headers = authHeaders + mapOf(
                             "Origin" to mainUrl,
-                            "Referer" to "$mainUrl/",
                             "Content-Type" to "application/json"
                         ),
                         json = JsonAsString(redeemPayload),
@@ -957,10 +955,8 @@ class Idlix : MainAPI() {
                     try {
                         val pentosResp = app.post(
                             "https://e2e.majorplay.net/api/play",
-                            headers = mapOf(
-                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+                            headers = authHeaders + mapOf(
                                 "Origin" to mainUrl,
-                                "Referer" to "$mainUrl/",
                                 "Content-Type" to "application/json"
                             ),
                             json = JsonAsString(redeemPayload)
@@ -1105,7 +1101,7 @@ class Idlix : MainAPI() {
     private suspend fun postClaim(gateToken: String, pageUrl: String): JSONObject {
         val claimResp = app.post(
             "$mainUrl/api/watch/session/claim",
-            headers = apiHeaders + mapOf(
+            headers = authHeaders + mapOf(
                 "Origin" to mainUrl,
                 "Referer" to "$pageUrl/",
                 "Content-Type" to "application/json"
