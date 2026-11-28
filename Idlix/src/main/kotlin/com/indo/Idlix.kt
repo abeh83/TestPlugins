@@ -1124,13 +1124,20 @@ class Idlix : MainAPI() {
         userAgent: String?,
         callback: (ExtractorLink) -> Unit
     ) {
-        val linkHeaders = authHeaders.toMutableMap()
-		linkHeaders.remove("Accept")
-		
-        if (!userAgent.isNullOrBlank()) linkHeaders["User-Agent"] = userAgent
+        // 1. Headers for fetching the master playlist (Needs your login token to get 1080p)
+        val fetchHeaders = authHeaders.toMutableMap()
+        fetchHeaders.remove("Accept") // Remove Accept so we get raw m3u8 text
+        if (!userAgent.isNullOrBlank()) fetchHeaders["User-Agent"] = userAgent
+
+        // 2. Headers for the video player (NO login token, to avoid leaking it to the CDN)
+        val playerHeaders = mutableMapOf(
+            "Origin" to mainUrl,
+            "Referer" to "$mainUrl/"
+        )
+        if (!userAgent.isNullOrBlank()) playerHeaders["User-Agent"] = userAgent
 
         val variants = runCatching {
-            parseMasterVariants(app.get(streamUrl, headers = linkHeaders, interceptor = cfKiller).text, streamUrl)
+            parseMasterVariants(app.get(streamUrl, headers = fetchHeaders, interceptor = cfKiller).text, streamUrl)
         }.getOrNull().orEmpty()
 
         if (variants.isNotEmpty()) {
@@ -1147,7 +1154,7 @@ class Idlix : MainAPI() {
                         else -> Qualities.Unknown.value
                     }
                     this.referer = "$mainUrl/"
-                    this.headers = linkHeaders
+                    this.headers = playerHeaders // <-- SAFE: No auth token sent to CDN
                 })
             }
             return
@@ -1163,7 +1170,7 @@ class Idlix : MainAPI() {
                 else -> Qualities.Unknown.value
             }
             this.referer = "$mainUrl/"
-            this.headers = linkHeaders
+            this.headers = playerHeaders // <-- SAFE: No auth token sent to CDN
         })
     }
 
