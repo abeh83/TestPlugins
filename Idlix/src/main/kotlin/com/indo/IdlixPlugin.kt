@@ -89,7 +89,7 @@ class IdlixPlugin : Plugin() {
                             Toast.makeText(
                                 ctx,
                                 if (ok) "Account session established"
-                                else "Unable to establish account session"
+                                else "Unable to establish account session",
                                 Toast.LENGTH_LONG
                             ).show()
                         }
