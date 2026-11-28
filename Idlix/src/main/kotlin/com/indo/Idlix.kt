@@ -883,7 +883,7 @@ class Idlix : MainAPI() {
             val playInfoType = if (contentType == "tv_series" || extra.containsKey("season") || !directEpId.isNullOrBlank()) "episode" else "movie"
             val playInfoResp = app.get(
                 "$mainUrl/api/watch/play-info/$playInfoType/$contentId",
-                headers = authHeaders + mapOf("Referer" to "$pageUrl/"),
+                headers = apiHeaders + mapOf("Referer" to "$pageUrl/"),
                 interceptor = cfKiller
             )
             val playInfo = JSONObject(playInfoResp.text)
@@ -1031,12 +1031,6 @@ class Idlix : MainAPI() {
         val sessionData = AtomicReference<JSONObject?>(null)
         return try {
             if (DEBUG_WEBVIEW) withContext(Dispatchers.Main) { WebView.setWebContentsDebuggingEnabled(true) }
-            if (hasAccountSession()) {
-                accessToken?.let {
-                    CookieManager.getInstance().setCookie(mainUrl, "access_token=$it; path=/; secure")
-                    CookieManager.getInstance().flush()
-                }
-            }
             val resolver = WebViewResolver(
                 interceptUrl = MASTER_URL_REGEX,
                 additionalUrls = listOf(TRACE_URL_REGEX, SESSION_URL_REGEX),
@@ -1124,15 +1118,14 @@ class Idlix : MainAPI() {
         userAgent: String?,
         callback: (ExtractorLink) -> Unit
     ) {
-        // Plain headers for the CDN: no auth token, no Cloudflare solver.
-        val cdnHeaders = mutableMapOf(
-            "Origin" to mainUrl,
-            "Referer" to "$mainUrl/"
-        )
-        if (!userAgent.isNullOrBlank()) cdnHeaders["User-Agent"] = userAgent
+        // authHeaders carries the access_token cookie/Authorization when logged in,
+        // so the server returns the 1080p master instead of the guest 720p one.
+        val linkHeaders = authHeaders.toMutableMap()
+        if (!userAgent.isNullOrBlank()) linkHeaders["User-Agent"] = userAgent
 
         val variants = runCatching {
-            parseMasterVariants(app.get(streamUrl, headers = cdnHeaders).text, streamUrl)
+            val master = app.get(streamUrl, headers = linkHeaders, interceptor = cfKiller).text
+            parseMasterVariants(master, streamUrl)
         }.getOrNull().orEmpty()
 
         if (variants.isNotEmpty()) {
@@ -1149,12 +1142,13 @@ class Idlix : MainAPI() {
                         else -> Qualities.Unknown.value
                     }
                     this.referer = "$mainUrl/"
-                    this.headers = cdnHeaders
+                    this.headers = linkHeaders
                 })
             }
             return
         }
 
+        // Fallback: old single-link behavior
         val linkName = if (maxHeight > 0) "Idlix ${maxHeight}p" else "Idlix"
         callback(newExtractorLink("Idlix", linkName, streamUrl, type = ExtractorLinkType.M3U8) {
             this.quality = when {
@@ -1165,7 +1159,7 @@ class Idlix : MainAPI() {
                 else -> Qualities.Unknown.value
             }
             this.referer = "$mainUrl/"
-            this.headers = cdnHeaders
+            this.headers = linkHeaders
         })
     }
 
@@ -1376,7 +1370,7 @@ class Idlix : MainAPI() {
 			.toList()
 	}
 
-	private data class Variant(val url: String, val name: String, val height: Int)
+    private data class Variant(val url: String, val name: String, val height: Int)
 
     private fun parseMasterVariants(master: String, masterUrl: String): List<Variant> {
         val base = masterUrl.toHttpUrlOrNull() ?: return emptyList()
@@ -1401,14 +1395,15 @@ class Idlix : MainAPI() {
                 }
                 pending && line.isNotEmpty() && !line.startsWith("#") -> {
                     val url = base.resolve(line)?.toString() ?: continue
-                    out.add(Variant(url, audio?.let { audioNames[it] } ?: "Idlix $height", height))
+                    val label = audio?.let { audioNames[it] } ?: "Idlix $height"
+                    out.add(Variant(url, label, height))
                     pending = false
                 }
             }
         }
         return out
     }
-
+	
 	private fun parseQuality(q: String): Int {
 		return when {
 			q.contains("4K", true) ||
