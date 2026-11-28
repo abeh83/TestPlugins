@@ -1,51 +1,44 @@
 package com.indo
 
-import android.content.Context
 import android.app.AlertDialog
+import android.content.Context
+import android.text.InputType
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Toast
-import android.text.InputType
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @CloudstreamPlugin
 class IdlixPlugin : Plugin() {
 
-    private val loginScope = CoroutineScope(
-        SupervisorJob() + Dispatchers.Main
-    )
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     override fun load(context: Context) {
-
         val provider = Idlix()
+
+        // Restore the saved session (if any) before the app uses the provider
+        provider.initSession(context)
 
         registerMainAPI(provider)
 
         openSettings = { ctx ->
-
             if (provider.hasAccountSession()) {
-
                 AlertDialog.Builder(ctx)
                     .setTitle("Idlix Account")
-                    .setMessage("Account session available")
+                    .setMessage("You are logged in. The session is saved and survives app restarts.")
                     .setNegativeButton("Close", null)
                     .setPositiveButton("Logout") { _, _ ->
                         provider.logout()
-                        Toast.makeText(
-                            ctx,
-                            "Local session cleared",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        Toast.makeText(ctx, "Logged out", Toast.LENGTH_SHORT).show()
                     }
                     .show()
-
             } else {
-
                 val layout = LinearLayout(ctx).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(48, 24, 48, 0)
@@ -71,60 +64,37 @@ class IdlixPlugin : Plugin() {
                     .setTitle("Idlix Login")
                     .setView(layout)
                     .setNegativeButton("Cancel", null)
-					.setPositiveButton("Login") { _, _ ->
-					
-						val identifier = username.text.toString().trim()
-						val passwordValue = password.text.toString()
-					
-						password.text.clear()
-					
-						if (identifier.isBlank() || passwordValue.isEmpty()) {
-					
-							Toast.makeText(
-								ctx,
-								"Please enter username and password",
-								Toast.LENGTH_SHORT
-							).show()
-					
-						} else {
-					
-							loginScope.launch {
-					
-								val result = provider.testLogin(
-									identifier,
-									passwordValue
-								)
-					
-								val message = when (result) {
-									Idlix.LoginResult.SUCCESS ->
-										"Test login successful"
-					
-									Idlix.LoginResult.INVALID_CREDENTIALS ->
-										"Invalid username or password"
-					
-									Idlix.LoginResult.NETWORK_ERROR ->
-										"Network connection error"
-					
-									Idlix.LoginResult.SESSION_ERROR ->
-										"Unable to establish session"
-					
-									Idlix.LoginResult.UNTRUSTED_ENDPOINT ->
-										"Untrusted authentication endpoint"
-					
-									Idlix.LoginResult.SERVER_ERROR ->
-										"Authentication service unavailable"
-								}
-					
-								Toast.makeText(
-									ctx,
-									message,
-									Toast.LENGTH_SHORT
-								).show()
-							}
-						}
-					}
-					.show()
-			}
-		}
-	}
+                    .setPositiveButton("Login") { _, _ ->
+                        val identifier = username.text.toString().trim()
+                        val passwordValue = password.text.toString()
+                        password.text.clear()
+
+                        if (identifier.isBlank() || passwordValue.isEmpty()) {
+                            Toast.makeText(
+                                ctx,
+                                "Please enter username and password",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            return@setPositiveButton
+                        }
+
+                        scope.launch {
+                            Toast.makeText(ctx, "Logging in…", Toast.LENGTH_SHORT).show()
+
+                            // Real network login; tokens are saved inside login()
+                            val ok = withContext(Dispatchers.IO) {
+                                provider.login(identifier, passwordValue)
+                            }
+
+                            Toast.makeText(
+                                ctx,
+                                if (ok) "Login successful" else "Login failed — check your credentials",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                    .show()
+            }
+        }
+    }
 }
