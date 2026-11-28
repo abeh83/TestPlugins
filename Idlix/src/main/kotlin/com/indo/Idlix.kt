@@ -58,30 +58,16 @@ class Idlix : MainAPI() {
 	}
 	
 	private fun persistSession() {
-		val editor = sessionPrefs?.edit() ?: return
-		if (accessToken.isNullOrBlank()) {
-			editor.remove(KEY_ACCESS)
-				.remove(KEY_REFRESH)
-				.remove(KEY_ORIGIN)
-				.putBoolean(KEY_LOGGED_IN, false)
-		} else {
-			editor.putString(KEY_ACCESS, accessToken)
-				.putString(KEY_REFRESH, refreshToken)
-				.putString(KEY_ORIGIN, authenticatedOrigin)
-				.putBoolean(KEY_LOGGED_IN, true)
-		}
-		editor.apply()
+		sessionPrefs?.edit()
+			?.remove(KEY_ACCESS)
+			?.remove(KEY_REFRESH)
+			?.remove(KEY_ORIGIN)
+			?.remove(KEY_LOGGED_IN)
+			?.apply()
 	}
 	
 	private fun restoreSession() {
-		if (isLoggedIn) return
-		val prefs = sessionPrefs ?: return
-		val token = prefs.getString(KEY_ACCESS, null) ?: return
-		accessToken = token
-		refreshToken = prefs.getString(KEY_REFRESH, null)
-		authenticatedOrigin = prefs.getString(KEY_ORIGIN, null)
-		isLoggedIn = prefs.getBoolean(KEY_LOGGED_IN, false)
-		if (isLoggedIn) Log.d(TAG, "restored saved Idlix session")
+		persistSession()
 	}
 
 	enum class LoginResult {
@@ -111,10 +97,17 @@ class Idlix : MainAPI() {
 	}
 
 	fun hasAccountSession(): Boolean {
-		if (!isLoggedIn || accessToken.isNullOrBlank()) return false
-		if (authenticatedOrigin != null && authenticatedOrigin != mainUrl) {
-			Log.d(TAG, "session from $authenticatedOrigin used on moved domain $mainUrl")
+		if (!isLoggedIn || accessToken.isNullOrBlank()) {
+			return false
 		}
+	
+		if (authenticatedOrigin.isNullOrBlank() ||
+			authenticatedOrigin != mainUrl
+		) {
+			Log.w(TAG, "Account session origin mismatch")
+			return false
+		}
+	
 		return true
 	}
 
@@ -162,11 +155,16 @@ class Idlix : MainAPI() {
             val location = runCatching {
                 app.get(BACKUP_URL, allowRedirects = false, timeout = 5L).okhttpResponse.header("Location")
             }.onFailure { Log.d(TAG, "backup domain check failed: $it") }.getOrNull()
-            val target = location?.toHttpUrlOrNull()
-            if (target == null || target.scheme != "https" || target.host == BACKUP_HOST || target.host.endsWith(".$BACKUP_HOST")) {
-                Log.d(TAG, "backup domain gave no redirect, keeping $mainUrl")
-                return
-            }
+			val target = location?.toHttpUrlOrNull()
+			
+			if (target == null ||
+				target.scheme != "https" ||
+				target.host != "z3.idlixku.com" ||
+				target.port != 443
+			) {
+				Log.w(TAG, "Untrusted redirect destination rejected")
+				return
+			}
             val newMainUrl = "${target.scheme}://${target.host}"
             if (newMainUrl != mainUrl) {
                 Log.d(TAG, "main domain moved: $mainUrl -> $newMainUrl")
@@ -756,7 +754,7 @@ class Idlix : MainAPI() {
                         val subUrl = if (path.startsWith("http")) path else fixUrl(path)
                         subtitleCallback(newSubtitleFile(lang, subUrl))
                     }
-                    val maxHeight = claimJson.optInt("maxHeight", 720)
+                    val maxHeight = claimJson.optInt("maxHeight", 0)
                     registerSession(streamUrl, claimJson, apiHeaders["User-Agent"], null)
                     emitStream(streamUrl, maxHeight, apiHeaders["User-Agent"], callback)
                     return true
@@ -764,7 +762,7 @@ class Idlix : MainAPI() {
             }
 
             if (initialMaster.isNotBlank()) {
-                val maxHeight = claimJson.optInt("maxHeight", 720)
+                val maxHeight = claimJson.optInt("maxHeight", 0)
                 registerSession(initialMaster, claimJson, apiHeaders["User-Agent"], null)
                 emitStream(initialMaster, maxHeight, apiHeaders["User-Agent"], callback)
                 return true
@@ -844,7 +842,7 @@ class Idlix : MainAPI() {
             val cookie = runCatching { CookieManager.getInstance().getCookie(mainUrl) }.getOrNull()
             registerSession(streamUrl, session, userAgent, cookie)
             session?.optJSONArray("subtitles")?.let { emitSubtitles(it, userAgent, subtitleCallback) }
-            emitStream(streamUrl, 720, userAgent, callback)
+            emitStream(streamUrl, 0, userAgent, callback)
             true
         } catch (e: Exception) {
             Log.d(TAG, "webview failed: $e")
