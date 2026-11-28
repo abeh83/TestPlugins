@@ -1124,11 +1124,15 @@ class Idlix : MainAPI() {
         userAgent: String?,
         callback: (ExtractorLink) -> Unit
     ) {
-        val linkHeaders = authHeaders.toMutableMap()
-        if (!userAgent.isNullOrBlank()) linkHeaders["User-Agent"] = userAgent
+        // Plain headers for the CDN: no auth token, no Cloudflare solver.
+        val cdnHeaders = mutableMapOf(
+            "Origin" to mainUrl,
+            "Referer" to "$mainUrl/"
+        )
+        if (!userAgent.isNullOrBlank()) cdnHeaders["User-Agent"] = userAgent
 
         val variants = runCatching {
-            parseMasterVariants(app.get(streamUrl, headers = linkHeaders, interceptor = cfKiller).text, streamUrl)
+            parseMasterVariants(app.get(streamUrl, headers = cdnHeaders).text, streamUrl)
         }.getOrNull().orEmpty()
 
         if (variants.isNotEmpty()) {
@@ -1145,7 +1149,7 @@ class Idlix : MainAPI() {
                         else -> Qualities.Unknown.value
                     }
                     this.referer = "$mainUrl/"
-                    this.headers = linkHeaders
+                    this.headers = cdnHeaders
                 })
             }
             return
@@ -1161,41 +1165,8 @@ class Idlix : MainAPI() {
                 else -> Qualities.Unknown.value
             }
             this.referer = "$mainUrl/"
-            this.headers = linkHeaders
+            this.headers = cdnHeaders
         })
-    }
-
-    private data class Variant(val url: String, val name: String, val height: Int)
-
-    private fun parseMasterVariants(master: String, masterUrl: String): List<Variant> {
-        val base = masterUrl.toHttpUrlOrNull() ?: return emptyList()
-        val audioNames = mutableMapOf<String, String>()
-        val out = mutableListOf<Variant>()
-        var audio: String? = null
-        var height = 0
-        var pending = false
-
-        for (raw in master.lineSequence()) {
-            val line = raw.trim()
-            when {
-                line.startsWith("#EXT-X-MEDIA:TYPE=AUDIO") -> {
-                    val g = Regex("""GROUP-ID="([^"]+)"""").find(line)?.groupValues?.get(1)
-                    val n = Regex("""NAME="([^"]+)"""").find(line)?.groupValues?.get(1)
-                    if (g != null && n != null) audioNames[g] = n
-                }
-                line.startsWith("#EXT-X-STREAM-INF") -> {
-                    audio = Regex("""AUDIO="([^"]+)"""").find(line)?.groupValues?.getOrNull(1)
-                    height = Regex("""RESOLUTION=\d+x(\d+)""").find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                    pending = true
-                }
-                pending && line.isNotEmpty() && !line.startsWith("#") -> {
-                    val url = base.resolve(line)?.toString() ?: continue
-                    out.add(Variant(url, audio?.let { audioNames[it] } ?: "Idlix $height", height))
-                    pending = false
-                }
-            }
-        }
-        return out
     }
 
     /**
@@ -1404,6 +1375,39 @@ class Idlix : MainAPI() {
 			.sortedDescending()
 			.toList()
 	}
+
+	private data class Variant(val url: String, val name: String, val height: Int)
+
+    private fun parseMasterVariants(master: String, masterUrl: String): List<Variant> {
+        val base = masterUrl.toHttpUrlOrNull() ?: return emptyList()
+        val audioNames = mutableMapOf<String, String>()
+        val out = mutableListOf<Variant>()
+        var audio: String? = null
+        var height = 0
+        var pending = false
+
+        for (raw in master.lineSequence()) {
+            val line = raw.trim()
+            when {
+                line.startsWith("#EXT-X-MEDIA:TYPE=AUDIO") -> {
+                    val g = Regex("""GROUP-ID="([^"]+)"""").find(line)?.groupValues?.get(1)
+                    val n = Regex("""NAME="([^"]+)"""").find(line)?.groupValues?.get(1)
+                    if (g != null && n != null) audioNames[g] = n
+                }
+                line.startsWith("#EXT-X-STREAM-INF") -> {
+                    audio = Regex("""AUDIO="([^"]+)"""").find(line)?.groupValues?.getOrNull(1)
+                    height = Regex("""RESOLUTION=\d+x(\d+)""").find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                    pending = true
+                }
+                pending && line.isNotEmpty() && !line.startsWith("#") -> {
+                    val url = base.resolve(line)?.toString() ?: continue
+                    out.add(Variant(url, audio?.let { audioNames[it] } ?: "Idlix $height", height))
+                    pending = false
+                }
+            }
+        }
+        return out
+    }
 
 	private fun parseQuality(q: String): Int {
 		return when {
