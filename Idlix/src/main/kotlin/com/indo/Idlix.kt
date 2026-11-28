@@ -1,5 +1,7 @@
 package com.indo
 
+import android.content.Context
+import android.content.SharedPreferences
 import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebView
@@ -45,6 +47,42 @@ class Idlix : MainAPI() {
 	private var refreshToken: String? = null
 	private var isLoggedIn = false
 	private var authenticatedOrigin: String? = null
+	
+	// ===== Session persistence =====
+	private var sessionPrefs: SharedPreferences? = null
+	
+	fun initSession(context: Context) {
+		sessionPrefs = context.applicationContext
+			.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+		restoreSession()
+	}
+	
+	private fun persistSession() {
+		val editor = sessionPrefs?.edit() ?: return
+		if (accessToken.isNullOrBlank()) {
+			editor.remove(KEY_ACCESS)
+				.remove(KEY_REFRESH)
+				.remove(KEY_ORIGIN)
+				.putBoolean(KEY_LOGGED_IN, false)
+		} else {
+			editor.putString(KEY_ACCESS, accessToken)
+				.putString(KEY_REFRESH, refreshToken)
+				.putString(KEY_ORIGIN, authenticatedOrigin)
+				.putBoolean(KEY_LOGGED_IN, true)
+		}
+		editor.apply()
+	}
+	
+	private fun restoreSession() {
+		if (isLoggedIn) return
+		val prefs = sessionPrefs ?: return
+		val token = prefs.getString(KEY_ACCESS, null) ?: return
+		accessToken = token
+		refreshToken = prefs.getString(KEY_REFRESH, null)
+		authenticatedOrigin = prefs.getString(KEY_ORIGIN, null)
+		isLoggedIn = prefs.getBoolean(KEY_LOGGED_IN, false)
+		if (isLoggedIn) Log.d(TAG, "restored saved Idlix session")
+	}
 
 	enum class LoginResult {
 		SUCCESS,
@@ -73,10 +111,11 @@ class Idlix : MainAPI() {
 	}
 
 	fun hasAccountSession(): Boolean {
-    	return isLoggedIn &&
-        	!accessToken.isNullOrBlank() &&
-        	authenticatedOrigin != null &&
-        	authenticatedOrigin == mainUrl
+		if (!isLoggedIn || accessToken.isNullOrBlank()) return false
+		if (authenticatedOrigin != null && authenticatedOrigin != mainUrl) {
+			Log.d(TAG, "session from $authenticatedOrigin used on moved domain $mainUrl")
+		}
+		return true
 	}
 
 	private val authHeaders: Map<String, String>
@@ -195,6 +234,8 @@ class Idlix : MainAPI() {
 				accessToken = access
 				refreshToken = refresh
 				isLoggedIn = true
+				authenticatedOrigin = mainUrl
+				persistSession()
 				Log.d("Idlix", "Login successful")
 				true
 			} else {
@@ -212,6 +253,7 @@ class Idlix : MainAPI() {
 		refreshToken = null
 		authenticatedOrigin = null
 		isLoggedIn = false
+		persistSession()
 	}
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -1072,6 +1114,12 @@ class Idlix : MainAPI() {
         private const val BACKUP_HOST = "idlixian.com"
         private const val BACKUP_URL = "https://$BACKUP_HOST/"
         private const val MAIN_URL_CHECK_MS = 30 * 60 * 1000L
+		
+		private const val PREFS_NAME = "idlix_session"
+		private const val KEY_ACCESS = "access_token"
+		private const val KEY_REFRESH = "refresh_token"
+		private const val KEY_ORIGIN = "authenticated_origin"
+		private const val KEY_LOGGED_IN = "is_logged_in"
 
         // Lets the hidden WebView be inspected over adb (chrome://inspect) while testing.
         private const val DEBUG_WEBVIEW = false
