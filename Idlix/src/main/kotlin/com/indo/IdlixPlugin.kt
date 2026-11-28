@@ -31,7 +31,10 @@ class IdlixPlugin : Plugin() {
             if (provider.hasAccountSession()) {
                 AlertDialog.Builder(ctx)
                     .setTitle("Idlix Account")
-                    .setMessage("An account session is available for this app session.")
+                    .setMessage(
+						"An account session is available. " +
+						"Saved sessions may be restored after restarting the app."
+					)
                     .setNegativeButton("Close", null)
                     .setPositiveButton("Logout") { _, _ ->
                         provider.logout()
