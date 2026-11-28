@@ -771,7 +771,7 @@ class Idlix : MainAPI() {
                 found = true
             }
             Regex("""playbackUrl":"([^"]+)""").findAll(content).forEach { m ->
-                val quality = Regex("""quality":"([^"]+)""").find(content)?.groupValues?.getOrNull(1) ?: "FHD"
+                val quality = Regex("""quality":"([^"]+)""").find(content)?.groupValues?.getOrNull(1) ?: "Unknown"
                 callback(newExtractorLink("Idlix", "Idlix - $quality", m.groupValues[1]) {
                     this.quality = parseQuality(quality)
                     this.referer = "$mainUrl/"
@@ -1321,15 +1321,41 @@ class Idlix : MainAPI() {
 
     private fun nowSec() = System.currentTimeMillis() / 1000
 
-    private fun parseQuality(q: String): Int {
-        return when {
-            q.contains("4K", true) || q.contains("2160", true) -> 4
-            q.contains("1080", true) -> 3
-            q.contains("720", true) -> 2
-            q.contains("480", true) || q.contains("360", true) -> 1
-            else -> 3
-        }
-    }
+	private fun getAvailableResolutions(
+		manifest: String
+	): List<Int> {
+	
+		val resolutionPattern = Regex(
+			"""(?:^|,)\s*RESOLUTION=(\d+)x(\d+)(?:,|$)""",
+			RegexOption.IGNORE_CASE
+		)
+	
+		return manifest.lineSequence()
+			.map { it.trim() }
+			.filter { it.startsWith("#EXT-X-STREAM-INF:") }
+			.mapNotNull { line ->
+				resolutionPattern
+					.find(line.substringAfter(":"))
+					?.groupValues
+					?.getOrNull(2)
+					?.toIntOrNull()
+			}
+			.filter { it > 0 }
+			.distinct()
+			.sortedDescending()
+			.toList()
+	}
+
+	private fun parseQuality(q: String): Int {
+		return when {
+			q.contains("4K", true) -> Qualities.P2160.value
+			q.contains("1080", true) -> Qualities.P1080.value
+			q.contains("720", true) -> Qualities.P720.value
+			q.contains("480", true) -> Qualities.P480.value
+			q.contains("360", true) -> Qualities.P360.value
+			else -> Qualities.Unknown.value
+		}
+	}
 
     // Stored links may still point at an older mirror domain.
     private fun onMainDomain(url: String) = url.replace(Regex("""^https?://[^/]+"""), mainUrl)
