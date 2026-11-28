@@ -931,8 +931,10 @@ class Idlix : MainAPI() {
                 try {
                     val redeemResp = app.post(
                         fullRedeemUrl,
-                        headers = authHeaders + mapOf(
+                        headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
                             "Origin" to mainUrl,
+                            "Referer" to "$mainUrl/",
                             "Content-Type" to "application/json"
                         ),
                         json = JsonAsString(redeemPayload),
@@ -955,8 +957,10 @@ class Idlix : MainAPI() {
                     try {
                         val pentosResp = app.post(
                             "https://e2e.majorplay.net/api/play",
-                            headers = authHeaders + mapOf(
+                            headers = mapOf(
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
                                 "Origin" to mainUrl,
+                                "Referer" to "$mainUrl/",
                                 "Content-Type" to "application/json"
                             ),
                             json = JsonAsString(redeemPayload)
@@ -1101,7 +1105,7 @@ class Idlix : MainAPI() {
     private suspend fun postClaim(gateToken: String, pageUrl: String): JSONObject {
         val claimResp = app.post(
             "$mainUrl/api/watch/session/claim",
-            headers = authHeaders + mapOf(
+            headers = apiHeaders + mapOf(
                 "Origin" to mainUrl,
                 "Referer" to "$pageUrl/",
                 "Content-Type" to "application/json"
@@ -1118,46 +1122,18 @@ class Idlix : MainAPI() {
         userAgent: String?,
         callback: (ExtractorLink) -> Unit
     ) {
-        // authHeaders carries the access_token cookie/Authorization when logged in,
-        // so the server returns the 1080p master instead of the guest 720p one.
-        val linkHeaders = authHeaders.toMutableMap()
+        val linkHeaders = mutableMapOf("Origin" to mainUrl, "Referer" to "$mainUrl/")
         if (!userAgent.isNullOrBlank()) linkHeaders["User-Agent"] = userAgent
-
-        val variants = runCatching {
-            val master = app.get(streamUrl, headers = linkHeaders, interceptor = cfKiller).text
-            parseMasterVariants(master, streamUrl)
-        }.getOrNull().orEmpty()
-
-        if (variants.isNotEmpty()) {
-            val session = sessions[streamUrl]
-            variants.forEach { v ->
-                if (session != null) sessions[v.url] = session
-                callback(newExtractorLink("Idlix", v.name, v.url, type = ExtractorLinkType.M3U8) {
-                    this.quality = when {
-                        v.height >= 2160 -> Qualities.P2160.value
-                        v.height >= 1080 -> Qualities.P1080.value
-                        v.height >= 720 -> Qualities.P720.value
-                        v.height >= 480 -> Qualities.P480.value
-                        v.height >= 360 -> Qualities.P360.value
-                        else -> Qualities.Unknown.value
-                    }
-                    this.referer = "$mainUrl/"
-                    this.headers = linkHeaders
-                })
-            }
-            return
-        }
-
-        // Fallback: old single-link behavior
         val linkName = if (maxHeight > 0) "Idlix ${maxHeight}p" else "Idlix"
+        val linkQuality = when {
+            maxHeight >= 1080 -> Qualities.P1080.value
+            maxHeight >= 720 -> Qualities.P720.value
+            maxHeight >= 480 -> Qualities.P480.value
+            maxHeight >= 360 -> Qualities.P360.value
+            else -> Qualities.Unknown.value
+        }
         callback(newExtractorLink("Idlix", linkName, streamUrl, type = ExtractorLinkType.M3U8) {
-            this.quality = when {
-                maxHeight >= 1080 -> Qualities.P1080.value
-                maxHeight >= 720 -> Qualities.P720.value
-                maxHeight >= 480 -> Qualities.P480.value
-                maxHeight >= 360 -> Qualities.P360.value
-                else -> Qualities.Unknown.value
-            }
+            this.quality = linkQuality
             this.referer = "$mainUrl/"
             this.headers = linkHeaders
         })
@@ -1370,40 +1346,6 @@ class Idlix : MainAPI() {
 			.toList()
 	}
 
-    private data class Variant(val url: String, val name: String, val height: Int)
-
-    private fun parseMasterVariants(master: String, masterUrl: String): List<Variant> {
-        val base = masterUrl.toHttpUrlOrNull() ?: return emptyList()
-        val audioNames = mutableMapOf<String, String>()
-        val out = mutableListOf<Variant>()
-        var audio: String? = null
-        var height = 0
-        var pending = false
-
-        for (raw in master.lineSequence()) {
-            val line = raw.trim()
-            when {
-                line.startsWith("#EXT-X-MEDIA:TYPE=AUDIO") -> {
-                    val g = Regex("""GROUP-ID="([^"]+)"""").find(line)?.groupValues?.get(1)
-                    val n = Regex("""NAME="([^"]+)"""").find(line)?.groupValues?.get(1)
-                    if (g != null && n != null) audioNames[g] = n
-                }
-                line.startsWith("#EXT-X-STREAM-INF") -> {
-                    audio = Regex("""AUDIO="([^"]+)"""").find(line)?.groupValues?.getOrNull(1)
-                    height = Regex("""RESOLUTION=\d+x(\d+)""").find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                    pending = true
-                }
-                pending && line.isNotEmpty() && !line.startsWith("#") -> {
-                    val url = base.resolve(line)?.toString() ?: continue
-                    val label = audio?.let { audioNames[it] } ?: "Idlix $height"
-                    out.add(Variant(url, label, height))
-                    pending = false
-                }
-            }
-        }
-        return out
-    }
-	
 	private fun parseQuality(q: String): Int {
 		return when {
 			q.contains("4K", true) ||
