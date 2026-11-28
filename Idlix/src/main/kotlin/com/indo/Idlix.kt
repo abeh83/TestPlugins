@@ -1149,7 +1149,7 @@ class Idlix : MainAPI() {
                         else -> Qualities.Unknown.value
                     }
                     this.referer = "$mainUrl/"
-                    this.headers = linkHeaders
+                    this.headers = cdnHeaders
                 })
             }
             return
@@ -1165,7 +1165,7 @@ class Idlix : MainAPI() {
                 else -> Qualities.Unknown.value
             }
             this.referer = "$mainUrl/"
-            this.headers = linkHeaders
+            this.headers = cdnHeaders
         })
     }
 
